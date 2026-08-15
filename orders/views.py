@@ -12,8 +12,20 @@ from .services import cancel_order
 
 
 class OrderViewSet(viewsets.ModelViewSet):
-    queryset = Order.objects.all().order_by('-created_at')
     http_method_names = ['get', 'post', 'patch', 'head', 'options']
+
+    def get_queryset(self):
+        from django.db.models import Q
+        queryset = Order.objects.all().order_by('-created_at')
+        search = self.request.query_params.get('search', None)
+        status_filter = self.request.query_params.get('status', None)
+        if search:
+            queryset = queryset.filter(
+                Q(order_number__icontains=search) | Q(customer__name__icontains=search)
+            )
+        if status_filter:
+            queryset = queryset.filter(status=status_filter)
+        return queryset
 
     def get_serializer_class(self):
         if self.action == 'create':

@@ -5,6 +5,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework_simplejwt.views import TokenRefreshView
 from rest_framework_simplejwt.tokens import RefreshToken
+from .models import User
 from .serializers import LoginSerializer, UserSerializer
 
 
@@ -33,8 +34,47 @@ class LogoutView(APIView):
         return Response(status=status.HTTP_205_RESET_CONTENT)
 
 
+from rest_framework.viewsets import ModelViewSet
+from rest_framework.exceptions import PermissionDenied
+
+
 class MeView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         return Response(UserSerializer(request.user).data)
+
+
+class UserViewSet(ModelViewSet):
+    serializer_class = UserSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        if self.request.user.role != User.Role.ADMIN:
+            raise PermissionDenied("Hanya admin yang dapat mengelola user.")
+        queryset = User.objects.all().order_by('username')
+        search = self.request.query_params.get('search', None)
+        role = self.request.query_params.get('role', None)
+        if search:
+            queryset = queryset.filter(username__icontains=search)
+        if role:
+            queryset = queryset.filter(role=role)
+        return queryset
+
+    def perform_create(self, serializer):
+        if self.request.user.role != User.Role.ADMIN:
+            raise PermissionDenied("Hanya admin yang dapat mengelola user.")
+        password = self.request.data.get('password')
+        user = serializer.save()
+        if password:
+            user.set_password(password)
+            user.save()
+
+    def perform_update(self, serializer):
+        if self.request.user.role != User.Role.ADMIN:
+            raise PermissionDenied("Hanya admin yang dapat mengelola user.")
+        password = self.request.data.get('password')
+        user = serializer.save()
+        if password:
+            user.set_password(password)
+            user.save()
