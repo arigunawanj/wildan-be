@@ -19,12 +19,22 @@ class OrderViewSet(viewsets.ModelViewSet):
         queryset = Order.objects.all().order_by('-created_at')
         search = self.request.query_params.get('search', None)
         status_filter = self.request.query_params.get('status', None)
+        start_date = self.request.query_params.get('start_date', None)
+        end_date = self.request.query_params.get('end_date', None)
+        customer = self.request.query_params.get('customer', None)
+
         if search:
             queryset = queryset.filter(
                 Q(order_number__icontains=search) | Q(customer__name__icontains=search)
             )
         if status_filter:
             queryset = queryset.filter(status=status_filter)
+        if start_date:
+            queryset = queryset.filter(created_at__date__gte=start_date)
+        if end_date:
+            queryset = queryset.filter(created_at__date__lte=end_date)
+        if customer:
+            queryset = queryset.filter(customer_id=customer)
         return queryset
 
     def get_serializer_class(self):
@@ -62,19 +72,48 @@ class OrderStatsView(APIView):
 
     def get(self, request):
         now = timezone.now()
-        orders_this_month = Order.objects.filter(
-            created_at__year=now.year, created_at__month=now.month,
-        ).exclude(status=Order.Status.DIBATALKAN)
+        orders_qs = Order.objects.all()
+
+        # Extract filters
+        customer_id = request.query_params.get('customer')
+        order_status = request.query_params.get('status')
+        start_date = request.query_params.get('start_date')
+        end_date = request.query_params.get('end_date')
+        search = request.query_params.get('search')
+
+        # Apply filters
+        if customer_id:
+            orders_qs = orders_qs.filter(customer_id=customer_id)
+        if order_status:
+            orders_qs = orders_qs.filter(status=order_status)
+        if start_date:
+            orders_qs = orders_qs.filter(created_at__date__gte=start_date)
+        if end_date:
+            orders_qs = orders_qs.filter(created_at__date__lte=end_date)
+        if search:
+            from django.db.models import Q
+            orders_qs = orders_qs.filter(
+                Q(order_number__icontains=search) | Q(customer__name__icontains=search)
+            )
+
+        # Filters this month stats
+        orders_this_month = orders_qs.filter(
+            created_at__year=now.year, created_at__month=now.month
+        )
+        orders_this_month_active = orders_this_month.exclude(status=Order.Status.DIBATALKAN)
 
         revenue = OrderItem.objects.filter(
-            order__in=orders_this_month
+            order__in=orders_this_month_active
         ).aggregate(total=Sum(F('quantity') * F('price_at_order')))['total'] or 0
+
+        pending_orders_count = orders_qs.filter(status=Order.Status.PENDING).count()
+        low_stock_products_count = Product.objects.filter(
+            stock__lte=F('low_stock_threshold')
+        ).count()
 
         return Response({
             'orders_this_month': orders_this_month.count(),
-            'pending_orders': Order.objects.filter(status=Order.Status.PENDING).count(),
-            'low_stock_products': Product.objects.filter(
-                stock__lte=F('low_stock_threshold')
-            ).count(),
+            'pending_orders': pending_orders_count,
+            'low_stock_products': low_stock_products_count,
             'revenue_this_month': str(revenue),
         })
